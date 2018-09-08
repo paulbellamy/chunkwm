@@ -248,8 +248,11 @@ Move(int Direction)
     // If reset is enabled, and we are not already moving, move the mouse to the middle
     if (ResetBeforeMove && !MoveIsInProgress()) SetMousePosition(DisplayBounds.size.width/2, DisplayBounds.size.height/2);
     // Find mouse current position
+    NSPoint mouseLocation = [NSEvent mouseLocation];
     // Expand appropriate mask side to half the distance
+    // Calculate new mouse position (center of mask)
     // Move mouse to new position
+    CGDisplayMoveCursorToPoint(display: CGDirectDisplayID, newPoint);
     // Reset cancel timeout
 }
 
