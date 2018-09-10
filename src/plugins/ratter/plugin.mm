@@ -1,4 +1,3 @@
-#import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -181,14 +180,27 @@ ClearLocator()
 }
 
 internal CGRect
-GetDisplayBounds() {
+GetDisplayBounds()
+{
     CGRect DisplayBounds;
+    // TODO: Main display is always the big one afaict, so this will not be good enough.
     CFStringRef DisplayRef = AXLibGetDisplayIdentifierForMainDisplay();
     if (DisplayRef) {
         DisplayBounds = AXLibGetDisplayBounds(DisplayRef);
         CFRelease(DisplayRef);
     }
     return DisplayBounds;
+}
+
+// Returns the CGDirectDisplayID
+// TODO: Some sort of error handling if it is an unknown display
+internal CGDirectDisplayID
+CGDirectDisplayIDForPoint(int X, int Y)
+{
+    CGDirectDisplayID displayIDs[1];
+    unsigned resultCount;
+    CGGetDisplaysWithPoint(CGPointMake(X, Y), 1, displayIDs, &resultCount);
+    return displayIDs[0];
 }
 
 internal void
@@ -276,35 +288,40 @@ ClearMask()
 }
 
 internal bool
-MoveIsInProgress() {
+MoveIsInProgress()
+{
     // If we have a mask, we're moving!
     return !!Mask;
+}
+
+internal NSPoint
+GetMousePosition()
+{
+  return [NSEvent mouseLocation];
 }
 
 internal void
 ShowLocator()
 {
     // TODO: Set timeout to clear it
-    // TODO: Get the mouse coords here
-    // CreateLocator(mousex, mousey);
+    NSPoint mouse = GetMousePosition();
+    CreateLocator(mouse.x, mouse.y);
 }
 
 internal void
-SetMousePosition(int X, int Y, bool triggerEvents) {
-  // TODO: Implement this
-  CGPoint Position;
-  Position.x = X;
-  Position.y = Y;
+SetMousePosition(int X, int Y, bool triggerEvents)
+{
+  NSPoint Position = NSMakePoint(X, Y);
   if (triggerEvents) {
-      // TODO: This will always be the big display. We want to move it in the global space...
-      CGMoveCursorToPoint(Position);
+      CGDisplayMoveCursorToPoint(CGDirectDisplayIDForPoint(X, Y), Position);
   } else {
       CGWarpMouseCursorPosition(Position);
   }
 }
 
 internal void
-BeginMove() {
+BeginMove()
+{
     // If we're already moving, noop
     if (MoveIsInProgress()) return;
     CGRect DisplayBounds = GetDisplayBounds();
@@ -321,27 +338,27 @@ Move(int Direction)
     // Find the screen dimensions
     CGRect DisplayBounds = GetDisplayBounds();
     // Find mouse current position
-    NSPoint mouseLocation = [NSEvent mouseLocation];
+    NSPoint mouse = GetMousePosition();
     // Calculate new mouse position (center of mask), and expand appropriate
     // mask side to where the mouse is
-    int newX = mouseLocation.x;
-    int newY = mouseLocation.y;
+    int newX = mouse.x;
+    int newY = mouse.y;
     switch (Direction) {
     case UP:
-        newY = Mask->Y + ((mouseLocation.y - Mask->Y) / 2);
-        UpdateMask(Mask, Mask->X, Mask->Y, Mask->W, DisplayBounds.size.height - mouseLocation.y);
+        newY = Mask->Y + ((mouse.y - Mask->Y) / 2);
+        UpdateMask(Mask, Mask->X, Mask->Y, Mask->W, DisplayBounds.size.height - mouse.y);
         break;
     case DOWN:
-        newY = mouseLocation.y + ((Mask->Y + Mask->H - mouseLocation.y) / 2);
-        UpdateMask(Mask, Mask->X, mouseLocation.y, Mask->W, Mask->H);
+        newY = mouse.y + ((Mask->Y + Mask->H - mouse.y) / 2);
+        UpdateMask(Mask, Mask->X, mouse.y, Mask->W, Mask->H);
         break;
     case LEFT:
-        newX = Mask->X + ((mouseLocation.x - Mask->X) / 2);
-        UpdateMask(Mask, mouseLocation.x, Mask->Y, Mask->W, Mask->H);
+        newX = Mask->X + ((mouse.x - Mask->X) / 2);
+        UpdateMask(Mask, mouse.x, Mask->Y, Mask->W, Mask->H);
         break;
     case RIGHT:
-        newX = mouseLocation.x + ((Mask->X + Mask->W - mouseLocation.x) / 2);
-        UpdateMask(Mask, Mask->X, Mask->Y, DisplayBounds.size.width - mouseLocation.x, Mask->H);
+        newX = mouse.x + ((Mask->X + Mask->W - mouse.x) / 2);
+        UpdateMask(Mask, Mask->X, Mask->Y, DisplayBounds.size.width - mouse.x, Mask->H);
         break;
     }
 
@@ -357,8 +374,8 @@ FinishMove()
     ClearMask();
     // Move the mouse to it's current position to trigger movement events
     // TODO: do we need to warp back to start then move it?
-    NSPoint mouseLocation = [NSEvent mouseLocation];
-    SetMousePosition(mouseLocation.x, mouseLocation.y, true);
+    NSPoint mouse = GetMousePosition();
+    SetMousePosition(mouse.x, mouse.y, true);
     // If we are dragging, reset position, and trigger a mouse-up
 }
 
