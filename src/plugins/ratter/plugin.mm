@@ -437,10 +437,10 @@ PLUGIN_BOOL_FUNC(PluginInit)
     CreateCVar("ratter_locator_border_width", 0);
     CreateCVar("ratter_locator_border_radius", 0);
     CreateCVar("ratter_locator_border_color", 0);
-    CreateCVar("ratter_locator_backgound_color", 0xffd5c4a1);
+    CreateCVar("ratter_locator_backgound_color", 0x330000ff);
     CreateCVar("ratter_locator_display_time", 500);
     CreateCVar("ratter_show_mask", 1);
-    CreateCVar("ratter_mask_color", 0xffd5c4a1);
+    CreateCVar("ratter_mask_color", 0x330000ff);
 
     ResetBeforeMove = CVarIntegerValue("ratter_reset");
     ShowMask = CVarIntegerValue("ratter_show_mask");
