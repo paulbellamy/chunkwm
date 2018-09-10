@@ -1,3 +1,4 @@
+#import <Carbon/Carbon.h>
 #import <Cocoa/Cocoa.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -28,7 +29,7 @@
 #define UP    0
 #define DOWN  1
 #define LEFT  2
-#define RIGHT 2
+#define RIGHT 3
 
 // an overlay draws a rectangle in the view
 struct overlay
@@ -45,6 +46,10 @@ struct overlay
 // a mask is the opposite of an overlay. Everything *outside* the rectangle is covered.
 struct mask
 {
+    int X;
+    int Y;
+    int W;
+    int H;
     overlay *Inside;
     overlay *Top;
     overlay *Bottom;
@@ -115,6 +120,23 @@ CreateOverlay(int X, int Y, int W, int H, int BorderWidth, int BorderRadius, uns
 }
 
 internal void
+UpdateOverlayRect(overlay *Overlay, int X, int Y, int W, int H)
+{
+    if ([NSThread isMainThread]) {
+        NSAutoreleasePool *Pool = [[NSAutoreleasePool alloc] init];
+        [Overlay->Handle setFrame:NSMakeRect(X, Y, W, H) display:YES animate:NO];
+        [Pool release];
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^(void)
+        {
+            NSAutoreleasePool *Pool = [[NSAutoreleasePool alloc] init];
+            [Overlay->Handle setFrame:NSMakeRect(X, Y, W, H) display:YES animate:NO];
+            [Pool release];
+        });
+    }
+}
+
+internal void
 DestroyOverlay(overlay *Overlay)
 {
     if ([NSThread isMainThread]) {
@@ -163,8 +185,8 @@ GetDisplayBounds() {
     CGRect DisplayBounds;
     CFStringRef DisplayRef = AXLibGetDisplayIdentifierForMainDisplay();
     if (DisplayRef) {
-      DisplayBounds = AXLibGetDisplayBounds(DisplayRef);
-      CFRelease(DisplayRef);
+        DisplayBounds = AXLibGetDisplayBounds(DisplayRef);
+        CFRelease(DisplayRef);
     }
     return DisplayBounds;
 }
@@ -181,6 +203,10 @@ CreateMask(int X, int Y, int W, int H)
     int DisplayWidth = DisplayBounds.size.width;
     int DisplayHeight = DisplayBounds.size.height;
     mask *m = (mask *) malloc(sizeof(mask));
+    m->X = X;
+    m->Y = Y;
+    m->W = W;
+    m->H = H;
     m->Inside = CreateOverlay(X, Y, W, H, BorderWidth, BorderRadius, BorderColor, 0);
     m->Top = CreateOverlay(0, 0, DisplayWidth, Y, 0, 0, 0, BackgroundColor);
     m->Bottom = CreateOverlay(0, Y+H, DisplayWidth, DisplayHeight - (Y+H), 0, 0, 0, BackgroundColor);
@@ -188,6 +214,33 @@ CreateMask(int X, int Y, int W, int H)
     m->Right = CreateOverlay(X+W, 0, DisplayWidth - (X+W), DisplayHeight, 0, 0, 0, BackgroundColor);
     Mask = m;
 }
+
+internal void
+UpdateMask(mask *Mask, int X, int Y, int W, int H)
+{
+    CGRect DisplayBounds = GetDisplayBounds();
+    int DisplayWidth = DisplayBounds.size.width;
+    int DisplayHeight = DisplayBounds.size.height;
+
+    if (X != Mask->X) {
+        Mask->X = X;
+        UpdateOverlayRect(Mask->Left, 0, 0, X, DisplayHeight);
+    }
+    if (Y != Mask->Y) {
+        Mask->Y = Y;
+        UpdateOverlayRect(Mask->Top, 0, 0, DisplayWidth, Y);
+    }
+    if (W != Mask->W) {
+        Mask->W = W;
+        UpdateOverlayRect(Mask->Right, X+W, 0, DisplayWidth - (X+W), DisplayHeight);
+    }
+    if (H != Mask->H) {
+        Mask->H = H;
+        UpdateOverlayRect(Mask->Bottom, 0, Y+H, DisplayWidth, DisplayHeight - (Y+H));
+    }
+    UpdateOverlayRect(Mask->Inside, X, Y, W, H);
+}
+
 
 internal void
 DestroyMask(mask *Mask)
@@ -218,6 +271,7 @@ ClearMask()
     if (Mask) {
         // TODO: Do we need to clear it here? Thread safe?
         DestroyMask(Mask);
+        Mask = nil;
     }
 }
 
@@ -236,44 +290,89 @@ ShowLocator()
 }
 
 internal void
-SetMousePosition(int X, int Y) {
+SetMousePosition(int X, int Y, bool triggerEvents) {
   // TODO: Implement this
+  CGPoint Position;
+  Position.x = X;
+  Position.y = Y;
+  if (triggerEvents) {
+      // TODO: This will always be the big display. We want to move it in the global space...
+      CGMoveCursorToPoint(Position);
+  } else {
+      CGWarpMouseCursorPosition(Position);
+  }
+}
+
+internal void
+BeginMove() {
+    // If we're already moving, noop
+    if (MoveIsInProgress()) return;
+    CGRect DisplayBounds = GetDisplayBounds();
+    // If reset is enabled, and we are not already moving, move the mouse to the middle
+    if (ResetBeforeMove) SetMousePosition(DisplayBounds.size.width/2, DisplayBounds.size.height/2, false);
+    // Create the mask, at the edges of the screen
+    CreateMask(0, 0, DisplayBounds.size.width, DisplayBounds.size.height);
 }
 
 internal void
 Move(int Direction)
 {
+    BeginMove();
     // Find the screen dimensions
     CGRect DisplayBounds = GetDisplayBounds();
-    // If reset is enabled, and we are not already moving, move the mouse to the middle
-    if (ResetBeforeMove && !MoveIsInProgress()) SetMousePosition(DisplayBounds.size.width/2, DisplayBounds.size.height/2);
     // Find mouse current position
     NSPoint mouseLocation = [NSEvent mouseLocation];
-    // Expand appropriate mask side to half the distance
-    // Calculate new mouse position (center of mask)
+    // Calculate new mouse position (center of mask), and expand appropriate
+    // mask side to where the mouse is
+    int newX = mouseLocation.x;
+    int newY = mouseLocation.y;
+    switch (Direction) {
+    case UP:
+        newY = Mask->Y + ((mouseLocation.y - Mask->Y) / 2);
+        UpdateMask(Mask, Mask->X, Mask->Y, Mask->W, DisplayBounds.size.height - mouseLocation.y);
+        break;
+    case DOWN:
+        newY = mouseLocation.y + ((Mask->Y + Mask->H - mouseLocation.y) / 2);
+        UpdateMask(Mask, Mask->X, mouseLocation.y, Mask->W, Mask->H);
+        break;
+    case LEFT:
+        newX = Mask->X + ((mouseLocation.x - Mask->X) / 2);
+        UpdateMask(Mask, mouseLocation.x, Mask->Y, Mask->W, Mask->H);
+        break;
+    case RIGHT:
+        newX = mouseLocation.x + ((Mask->X + Mask->W - mouseLocation.x) / 2);
+        UpdateMask(Mask, Mask->X, Mask->Y, DisplayBounds.size.width - mouseLocation.x, Mask->H);
+        break;
+    }
+
     // Move mouse to new position
-    CGDisplayMoveCursorToPoint(display: CGDirectDisplayID, newPoint);
+    SetMousePosition(newX, newY, false);
+
     // Reset cancel timeout
 }
 
 internal void
-CancelMove()
+FinishMove()
 {
     ClearMask();
+    // Move the mouse to it's current position to trigger movement events
+    // TODO: do we need to warp back to start then move it?
+    NSPoint mouseLocation = [NSEvent mouseLocation];
+    SetMousePosition(mouseLocation.x, mouseLocation.y, true);
     // If we are dragging, reset position, and trigger a mouse-up
 }
 
 internal void
 Click()
 {
-    if (MoveIsInProgress()) CancelMove();
+    if (MoveIsInProgress()) FinishMove();
     // If we are dragging, trigger a mouse-up, otherwise a click
 }
 
 internal void
 RightClick()
 {
-    if (MoveIsInProgress()) CancelMove();
+    if (MoveIsInProgress()) FinishMove();
     // Trigger a right click
 }
 
@@ -281,7 +380,7 @@ internal void
 BeginDrag()
 {
     // TODO: Figure out how this should work
-    if (MoveIsInProgress()) CancelMove();
+    if (MoveIsInProgress()) FinishMove();
     // Trigger a mouse-down
 }
 
@@ -306,7 +405,7 @@ CommandHandler(void *Data)
     } else if (StringEquals(Payload->Command, "right")) {
         Move(RIGHT);
     } else if (StringEquals(Payload->Command, "cancel")) {
-        CancelMove();
+        FinishMove();
     } else if (StringEquals(Payload->Command, "click")) {
         Click();
     } else if (StringEquals(Payload->Command, "rightclick")) {
@@ -350,8 +449,8 @@ PLUGIN_BOOL_FUNC(PluginInit)
 
 PLUGIN_VOID_FUNC(PluginDeInit)
 {
-    if (MoveIsInProgress) {
-        CancelMove();
+    if (MoveIsInProgress()) {
+        FinishMove();
     }
 }
 
