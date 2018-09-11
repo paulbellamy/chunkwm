@@ -384,6 +384,7 @@ Click()
 {
     if (MoveIsInProgress()) FinishMove();
     // If we are dragging, trigger a mouse-up, otherwise a click
+    // TODO: Handle modifiers (alt/ctrl/etc)
 }
 
 internal void
@@ -391,6 +392,7 @@ RightClick()
 {
     if (MoveIsInProgress()) FinishMove();
     // Trigger a right click
+    // TODO: Handle modifiers (alt/ctrl/etc)
 }
 
 internal void
