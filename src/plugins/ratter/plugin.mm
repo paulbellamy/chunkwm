@@ -176,6 +176,7 @@ ClearLocator()
     if (Locator) {
         // TODO: Do we need to clear it here? Thread safe?
         DestroyOverlay(Locator);
+        Locator = nil;
     }
 }
 
@@ -371,6 +372,7 @@ Move(int Direction)
 internal void
 FinishMove()
 {
+    ClearLocator();
     ClearMask();
     // Move the mouse to it's current position to trigger movement events
     // TODO: do we need to warp back to start then move it?
