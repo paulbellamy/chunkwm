@@ -20,15 +20,18 @@
 #include "../../common/config/cvar.cpp"
 #include "../../common/border/border.mm"
 
+extern chunkwm_log *c_log;
+chunkwm_log *c_log;
+
 #define internal static
 #define DESKTOP_MODE_BSP      0
 #define DESKTOP_MODE_MONOCLE  1
 #define DESKTOP_MODE_FLOATING 2
 
 #define UP    0
-#define DOWN  1
-#define LEFT  2
-#define RIGHT 3
+#define RIGHT 1
+#define DOWN  2
+#define LEFT  3
 
 // an overlay draws a rectangle in the view
 struct overlay
@@ -45,15 +48,15 @@ struct overlay
 // a mask is the opposite of an overlay. Everything *outside* the rectangle is covered.
 struct mask
 {
-    int X;
-    int Y;
-    int W;
-    int H;
-    overlay *Inside;
-    overlay *Top;
-    overlay *Bottom;
-    overlay *Left;
-    overlay *Right;
+    int Top;
+    int Right;
+    int Bottom;
+    int Left;
+    overlay *InsideOverlay;
+    overlay *TopOverlay;
+    overlay *RightOverlay;
+    overlay *BottomOverlay;
+    overlay *LeftOverlay;
 };
 
 internal macos_application *Application;
@@ -205,7 +208,7 @@ CGDirectDisplayIDForPoint(int X, int Y)
 }
 
 internal void
-CreateMask(int X, int Y, int W, int H)
+CreateMask(int Top, int Right, int Bottom, int Left)
 {
     int BorderWidth = CVarIntegerValue("ratter_mask_border_width");
     int BorderRadius = CVarIntegerValue("ratter_mask_border_radius");
@@ -216,42 +219,47 @@ CreateMask(int X, int Y, int W, int H)
     int DisplayWidth = DisplayBounds.size.width;
     int DisplayHeight = DisplayBounds.size.height;
     mask *m = (mask *) malloc(sizeof(mask));
-    m->X = X;
-    m->Y = Y;
-    m->W = W;
-    m->H = H;
-    m->Inside = CreateOverlay(X, Y, W, H, BorderWidth, BorderRadius, BorderColor, 0);
-    m->Top = CreateOverlay(0, 0, DisplayWidth, Y, 0, 0, 0, BackgroundColor);
-    m->Bottom = CreateOverlay(0, Y+H, DisplayWidth, DisplayHeight - (Y+H), 0, 0, 0, BackgroundColor);
-    m->Left = CreateOverlay(0, 0, X, DisplayHeight, 0, 0, 0, BackgroundColor);
-    m->Right = CreateOverlay(X+W, 0, DisplayWidth - (X+W), DisplayHeight, 0, 0, 0, BackgroundColor);
+    m->Top = Top;
+    m->Right = Right;
+    m->Bottom = Bottom;
+    m->Left = Left;
+    m->InsideOverlay = CreateOverlay(Left, Top, DisplayWidth-Right, DisplayHeight-Bottom, BorderWidth, BorderRadius, BorderColor, 0);
+    m->TopOverlay = CreateOverlay(0, 0, DisplayWidth, Top, 0, 0, 0, BackgroundColor);
+    m->RightOverlay = CreateOverlay(DisplayWidth-Right, 0, Right, DisplayHeight, 0, 0, 0, BackgroundColor);
+    m->BottomOverlay = CreateOverlay(0, DisplayHeight-Bottom, DisplayWidth, Bottom, 0, 0, 0, BackgroundColor);
+    m->LeftOverlay = CreateOverlay(0, 0, Left, DisplayHeight, 0, 0, 0, BackgroundColor);
     Mask = m;
 }
 
 internal void
-UpdateMask(mask *Mask, int X, int Y, int W, int H)
+UpdateMask(mask *Mask, int Top, int Right, int Bottom, int Left)
 {
     CGRect DisplayBounds = GetDisplayBounds();
     int DisplayWidth = DisplayBounds.size.width;
     int DisplayHeight = DisplayBounds.size.height;
+    c_log(C_LOG_LEVEL_DEBUG, "UpdateMask(*, Top: %d, Right: %d, Bottom: %d, Left: %d)\n", Top, Right, Bottom, Left);
 
-    if (X != Mask->X) {
-        Mask->X = X;
-        UpdateOverlayRect(Mask->Left, 0, 0, X, DisplayHeight);
+    if (Top != Mask->Top) {
+        Mask->Top = Top;
+        UpdateOverlayRect(Mask->TopOverlay, 0, 0, DisplayWidth, Top);
+        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Top, X: %d, Y: %d, W: %d, H: %d)\n", 0, 0, DisplayWidth, Top);
     }
-    if (Y != Mask->Y) {
-        Mask->Y = Y;
-        UpdateOverlayRect(Mask->Top, 0, 0, DisplayWidth, Y);
+    if (Right != Mask->Right) {
+        Mask->Right = Right;
+        UpdateOverlayRect(Mask->RightOverlay, DisplayWidth - Right, 0, Right, DisplayHeight);
+        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Right, X: %d, Y: %d, W: %d, H: %d)\n", DisplayWidth - Right, 0, Right, DisplayHeight);
     }
-    if (W != Mask->W) {
-        Mask->W = W;
-        UpdateOverlayRect(Mask->Right, X+W, 0, DisplayWidth - (X+W), DisplayHeight);
+    if (Bottom != Mask->Bottom) {
+        Mask->Bottom = Bottom;
+        UpdateOverlayRect(Mask->BottomOverlay, 0, DisplayHeight-Bottom, DisplayWidth, Bottom);
+        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Bottom, X: %d, Y: %d, W: %d, H: %d)\n", 0, DisplayHeight-Bottom, DisplayWidth, Bottom);
     }
-    if (H != Mask->H) {
-        Mask->H = H;
-        UpdateOverlayRect(Mask->Bottom, 0, Y+H, DisplayWidth, DisplayHeight - (Y+H));
+    if (Left != Mask->Left) {
+        Mask->Left = Left;
+        UpdateOverlayRect(Mask->LeftOverlay, 0, 0, Left, DisplayHeight);
+        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Left, X: %d, Y: %d, W: %d, H: %d)\n", 0, 0, Left, DisplayHeight);
     }
-    UpdateOverlayRect(Mask->Inside, X, Y, W, H);
+    UpdateOverlayRect(Mask->InsideOverlay, Top, Left, DisplayWidth-(Left+Right), DisplayHeight-(Top+Bottom));
 }
 
 
@@ -259,20 +267,20 @@ internal void
 DestroyMask(mask *Mask)
 {
     if ([NSThread isMainThread]) {
-        DestroyOverlay(Mask->Inside);
-        DestroyOverlay(Mask->Top);
-        DestroyOverlay(Mask->Bottom);
-        DestroyOverlay(Mask->Left);
-        DestroyOverlay(Mask->Right);
+        DestroyOverlay(Mask->InsideOverlay);
+        DestroyOverlay(Mask->TopOverlay);
+        DestroyOverlay(Mask->RightOverlay);
+        DestroyOverlay(Mask->BottomOverlay);
+        DestroyOverlay(Mask->LeftOverlay);
         free(Mask);
     } else {
         dispatch_async(dispatch_get_main_queue(), ^(void)
         {
-            DestroyOverlay(Mask->Inside);
-            DestroyOverlay(Mask->Top);
-            DestroyOverlay(Mask->Bottom);
-            DestroyOverlay(Mask->Left);
-            DestroyOverlay(Mask->Right);
+            DestroyOverlay(Mask->InsideOverlay);
+            DestroyOverlay(Mask->TopOverlay);
+            DestroyOverlay(Mask->RightOverlay);
+            DestroyOverlay(Mask->BottomOverlay);
+            DestroyOverlay(Mask->LeftOverlay);
             free(Mask);
         });
     }
@@ -298,7 +306,10 @@ MoveIsInProgress()
 internal NSPoint
 GetMousePosition()
 {
-  return [NSEvent mouseLocation];
+  CGEventRef event = CGEventCreate(nil);
+  CGPoint loc = CGEventGetLocation(event);
+  CFRelease(event);
+  return loc;
 }
 
 internal void
@@ -329,7 +340,7 @@ BeginMove()
     // If reset is enabled, and we are not already moving, move the mouse to the middle
     if (ResetBeforeMove) SetMousePosition(DisplayBounds.size.width/2, DisplayBounds.size.height/2, false);
     // Create the mask, at the edges of the screen
-    CreateMask(0, 0, DisplayBounds.size.width, DisplayBounds.size.height);
+    CreateMask(0, 0, 0, 0);
 }
 
 internal void
@@ -342,29 +353,40 @@ Move(int Direction)
     NSPoint mouse = GetMousePosition();
     // Calculate new mouse position (center of mask), and expand appropriate
     // mask side to where the mouse is
-    int newX = mouse.x;
-    int newY = mouse.y;
+    // TODO: Mouse and mask coords are different systems. mouse starts in
+    // bottom left, mask starts in top-left. The scales are also different.
+    int mouseX = mouse.x;
+    int mouseY = mouse.y;
+    c_log(C_LOG_LEVEL_DEBUG, "mouseX: %d, mouseY: %d\n", mouseX, mouseY);
     switch (Direction) {
     case UP:
-        newY = Mask->Y + ((mouse.y - Mask->Y) / 2);
-        UpdateMask(Mask, Mask->X, Mask->Y, Mask->W, DisplayBounds.size.height - mouse.y);
-        break;
-    case DOWN:
-        newY = mouse.y + ((Mask->Y + Mask->H - mouse.y) / 2);
-        UpdateMask(Mask, Mask->X, mouse.y, Mask->W, Mask->H);
-        break;
-    case LEFT:
-        newX = Mask->X + ((mouse.x - Mask->X) / 2);
-        UpdateMask(Mask, mouse.x, Mask->Y, Mask->W, Mask->H);
+        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
+        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
+        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
+        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
+        c_log(C_LOG_LEVEL_DEBUG, "Mask->Top: %d\n", Mask->Top);
+        c_log(C_LOG_LEVEL_DEBUG, "(mouseY - Mask->Top) / 2: %d\n", (mouseY - Mask->Top) / 2);
+        c_log(C_LOG_LEVEL_DEBUG, "mouseY - ((mouseY - Mask->Top) / 2): %d\n", mouseY - ((mouseY - Mask->Top) / 2));
+        UpdateMask(Mask, Mask->Top, Mask->Right, DisplayBounds.size.height - mouseY, Mask->Left);
+        mouseY = mouseY - ((mouseY - Mask->Top) / 2);
         break;
     case RIGHT:
-        newX = mouse.x + ((Mask->X + Mask->W - mouse.x) / 2);
-        UpdateMask(Mask, Mask->X, Mask->Y, DisplayBounds.size.width - mouse.x, Mask->H);
+        UpdateMask(Mask, Mask->Top, Mask->Right, Mask->Bottom, mouseX);
+        mouseX = mouseX + (((DisplayBounds.size.width - Mask->Right) - mouseX) / 2);
+        break;
+    case DOWN:
+        UpdateMask(Mask, mouseY, Mask->Right, Mask->Bottom, Mask->Left);
+        mouseY = mouseY + (((DisplayBounds.size.height - Mask->Bottom) - mouseY) / 2);
+        break;
+    case LEFT:
+        UpdateMask(Mask, Mask->Top, DisplayBounds.size.width - mouseX, Mask->Bottom, Mask->Left);
+        mouseX = mouseY - ((mouseX - Mask->Left) / 2);
         break;
     }
+    c_log(C_LOG_LEVEL_DEBUG, "Move(%d), (%d, %d) -> (%d, %d)\n", Direction, mouseX, mouseY, mouseX, mouseY);
 
     // Move mouse to new position
-    SetMousePosition(newX, newY, false);
+    SetMousePosition(mouseX, mouseY, false);
 
     // Reset cancel timeout
 }
@@ -419,12 +441,12 @@ CommandHandler(void *Data)
         ShowLocator();
     } else if (StringEquals(Payload->Command, "up")) {
         Move(UP);
+    } else if (StringEquals(Payload->Command, "right")) {
+        Move(RIGHT);
     } else if (StringEquals(Payload->Command, "down")) {
         Move(DOWN);
     } else if (StringEquals(Payload->Command, "left")) {
         Move(LEFT);
-    } else if (StringEquals(Payload->Command, "right")) {
-        Move(RIGHT);
     } else if (StringEquals(Payload->Command, "cancel")) {
         FinishMove();
     } else if (StringEquals(Payload->Command, "click")) {
@@ -449,19 +471,26 @@ PLUGIN_MAIN_FUNC(PluginMain)
 PLUGIN_BOOL_FUNC(PluginInit)
 {
     API = ChunkwmAPI;
+    c_log = API.Log;
     BeginCVars(&API);
 
+    CGRect DisplayBounds = GetDisplayBounds();
+    c_log(C_LOG_LEVEL_DEBUG, "DisplayBounds: %d, %d\n", DisplayBounds.size.width, DisplayBounds.size.height);
+
     CreateCVar("ratter_cancel_timeout", 1000);
-    CreateCVar("ratter_reset", 0);
-    CreateCVar("ratter_locator_width", 8);
-    CreateCVar("ratter_locator_height", 8);
-    CreateCVar("ratter_locator_border_width", 0);
-    CreateCVar("ratter_locator_border_radius", 0);
+    CreateCVar("ratter_locator_backgound_color", 0xbb4799b7);
     CreateCVar("ratter_locator_border_color", 0);
-    CreateCVar("ratter_locator_backgound_color", 0x330000ff);
+    CreateCVar("ratter_locator_border_radius", 16);
+    CreateCVar("ratter_locator_border_width", 0);
     CreateCVar("ratter_locator_display_time", 500);
+    CreateCVar("ratter_locator_height", 16);
+    CreateCVar("ratter_locator_width", 16);
+    CreateCVar("ratter_mask_background_color", 0xbb4799b7);
+    CreateCVar("ratter_mask_border_color", 0);
+    CreateCVar("ratter_mask_border_radius", 0);
+    CreateCVar("ratter_mask_border_width", 0);
+    CreateCVar("ratter_reset", 0);
     CreateCVar("ratter_show_mask", 1);
-    CreateCVar("ratter_mask_color", 0x330000ff);
 
     ResetBeforeMove = CVarIntegerValue("ratter_reset");
     ShowMask = CVarIntegerValue("ratter_show_mask");
