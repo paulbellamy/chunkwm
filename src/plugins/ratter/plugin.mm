@@ -159,6 +159,19 @@ DestroyOverlay(overlay *Overlay)
     }
 }
 
+internal CGRect
+GetDisplayBounds()
+{
+    CGRect DisplayBounds;
+    // TODO: Main display is always the big one afaict, so this will not be good enough.
+    CFStringRef DisplayRef = AXLibGetDisplayIdentifierForMainDisplay();
+    if (DisplayRef) {
+        DisplayBounds = AXLibGetDisplayBounds(DisplayRef);
+        CFRelease(DisplayRef);
+    }
+    return DisplayBounds;
+}
+
 internal void
 CreateLocator(int X, int Y)
 {
@@ -169,6 +182,7 @@ CreateLocator(int X, int Y)
     unsigned BorderColor = CVarUnsignedValue("ratter_locator_border_color");
     unsigned BackgroundColor = CVarUnsignedValue("ratter_locator_backgound_color");
     X -= W/2;
+    Y = GetDisplayBounds().size.height - Y; // Flip the Y axis so it is from top-left.
     Y -= H/2;
     Locator = CreateOverlay(X, Y, W, H, BorderWidth, BorderRadius, BorderColor, BackgroundColor);
 }
@@ -181,19 +195,6 @@ ClearLocator()
         DestroyOverlay(Locator);
         Locator = nil;
     }
-}
-
-internal CGRect
-GetDisplayBounds()
-{
-    CGRect DisplayBounds;
-    // TODO: Main display is always the big one afaict, so this will not be good enough.
-    CFStringRef DisplayRef = AXLibGetDisplayIdentifierForMainDisplay();
-    if (DisplayRef) {
-        DisplayBounds = AXLibGetDisplayBounds(DisplayRef);
-        CFRelease(DisplayRef);
-    }
-    return DisplayBounds;
 }
 
 // Returns the CGDirectDisplayID
@@ -223,10 +224,10 @@ CreateMask(int Top, int Right, int Bottom, int Left)
     m->Right = Right;
     m->Bottom = Bottom;
     m->Left = Left;
-    m->InsideOverlay = CreateOverlay(Left, Top, DisplayWidth-Right, DisplayHeight-Bottom, BorderWidth, BorderRadius, BorderColor, 0);
-    m->TopOverlay = CreateOverlay(0, 0, DisplayWidth, Top, 0, 0, 0, BackgroundColor);
+    m->InsideOverlay = CreateOverlay(Left, Bottom, DisplayWidth-Right, DisplayHeight-Top, BorderWidth, BorderRadius, BorderColor, 0);
+    m->TopOverlay = CreateOverlay(0, DisplayHeight-Top, DisplayWidth, Top, 0, 0, 0, BackgroundColor);
     m->RightOverlay = CreateOverlay(DisplayWidth-Right, 0, Right, DisplayHeight, 0, 0, 0, BackgroundColor);
-    m->BottomOverlay = CreateOverlay(0, DisplayHeight-Bottom, DisplayWidth, Bottom, 0, 0, 0, BackgroundColor);
+    m->BottomOverlay = CreateOverlay(0, 0, DisplayWidth, Bottom, 0, 0, 0, BackgroundColor);
     m->LeftOverlay = CreateOverlay(0, 0, Left, DisplayHeight, 0, 0, 0, BackgroundColor);
     Mask = m;
 }
@@ -237,27 +238,22 @@ UpdateMask(mask *Mask, int Top, int Right, int Bottom, int Left)
     CGRect DisplayBounds = GetDisplayBounds();
     int DisplayWidth = DisplayBounds.size.width;
     int DisplayHeight = DisplayBounds.size.height;
-    c_log(C_LOG_LEVEL_DEBUG, "UpdateMask(*, Top: %d, Right: %d, Bottom: %d, Left: %d)\n", Top, Right, Bottom, Left);
 
     if (Top != Mask->Top) {
         Mask->Top = Top;
-        UpdateOverlayRect(Mask->TopOverlay, 0, 0, DisplayWidth, Top);
-        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Top, X: %d, Y: %d, W: %d, H: %d)\n", 0, 0, DisplayWidth, Top);
+        UpdateOverlayRect(Mask->TopOverlay, 0, DisplayHeight-Top, DisplayWidth, Top);
     }
     if (Right != Mask->Right) {
         Mask->Right = Right;
         UpdateOverlayRect(Mask->RightOverlay, DisplayWidth - Right, 0, Right, DisplayHeight);
-        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Right, X: %d, Y: %d, W: %d, H: %d)\n", DisplayWidth - Right, 0, Right, DisplayHeight);
     }
     if (Bottom != Mask->Bottom) {
         Mask->Bottom = Bottom;
-        UpdateOverlayRect(Mask->BottomOverlay, 0, DisplayHeight-Bottom, DisplayWidth, Bottom);
-        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Bottom, X: %d, Y: %d, W: %d, H: %d)\n", 0, DisplayHeight-Bottom, DisplayWidth, Bottom);
+        UpdateOverlayRect(Mask->BottomOverlay, 0, 0, DisplayWidth, Bottom);
     }
     if (Left != Mask->Left) {
         Mask->Left = Left;
         UpdateOverlayRect(Mask->LeftOverlay, 0, 0, Left, DisplayHeight);
-        c_log(C_LOG_LEVEL_DEBUG, "UpdateOverRect(Left, X: %d, Y: %d, W: %d, H: %d)\n", 0, 0, Left, DisplayHeight);
     }
     UpdateOverlayRect(Mask->InsideOverlay, Top, Left, DisplayWidth-(Left+Right), DisplayHeight-(Top+Bottom));
 }
@@ -315,6 +311,7 @@ GetMousePosition()
 internal void
 ShowLocator()
 {
+    ClearLocator();
     // TODO: Set timeout to clear it
     NSPoint mouse = GetMousePosition();
     CreateLocator(mouse.x, mouse.y);
@@ -357,16 +354,8 @@ Move(int Direction)
     // bottom left, mask starts in top-left. The scales are also different.
     int mouseX = mouse.x;
     int mouseY = mouse.y;
-    c_log(C_LOG_LEVEL_DEBUG, "mouseX: %d, mouseY: %d\n", mouseX, mouseY);
     switch (Direction) {
     case UP:
-        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
-        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
-        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
-        c_log(C_LOG_LEVEL_DEBUG, "mouseY: %d\n", mouseY);
-        c_log(C_LOG_LEVEL_DEBUG, "Mask->Top: %d\n", Mask->Top);
-        c_log(C_LOG_LEVEL_DEBUG, "(mouseY - Mask->Top) / 2: %d\n", (mouseY - Mask->Top) / 2);
-        c_log(C_LOG_LEVEL_DEBUG, "mouseY - ((mouseY - Mask->Top) / 2): %d\n", mouseY - ((mouseY - Mask->Top) / 2));
         UpdateMask(Mask, Mask->Top, Mask->Right, DisplayBounds.size.height - mouseY, Mask->Left);
         mouseY = mouseY - ((mouseY - Mask->Top) / 2);
         break;
@@ -380,10 +369,9 @@ Move(int Direction)
         break;
     case LEFT:
         UpdateMask(Mask, Mask->Top, DisplayBounds.size.width - mouseX, Mask->Bottom, Mask->Left);
-        mouseX = mouseY - ((mouseX - Mask->Left) / 2);
+        mouseX = mouseX - ((mouseX - Mask->Left) / 2);
         break;
     }
-    c_log(C_LOG_LEVEL_DEBUG, "Move(%d), (%d, %d) -> (%d, %d)\n", Direction, mouseX, mouseY, mouseX, mouseY);
 
     // Move mouse to new position
     SetMousePosition(mouseX, mouseY, false);
@@ -473,9 +461,6 @@ PLUGIN_BOOL_FUNC(PluginInit)
     API = ChunkwmAPI;
     c_log = API.Log;
     BeginCVars(&API);
-
-    CGRect DisplayBounds = GetDisplayBounds();
-    c_log(C_LOG_LEVEL_DEBUG, "DisplayBounds: %d, %d\n", DisplayBounds.size.width, DisplayBounds.size.height);
 
     CreateCVar("ratter_cancel_timeout", 1000);
     CreateCVar("ratter_locator_backgound_color", 0xbb4799b7);
