@@ -302,6 +302,9 @@ MoveIsInProgress()
 internal NSPoint
 GetMousePosition()
 {
+  // TODO: This needs to take into account cursor size (or where the click
+  // would actually happen). It seems to move around the bottom-left ofthe
+  // mouse for some reason.
   CGEventRef event = CGEventCreate(nil);
   CGPoint loc = CGEventGetLocation(event);
   CFRelease(event);
@@ -350,8 +353,7 @@ Move(int Direction)
     NSPoint mouse = GetMousePosition();
     // Calculate new mouse position (center of mask), and expand appropriate
     // mask side to where the mouse is
-    // TODO: Mouse and mask coords are different systems. mouse starts in
-    // bottom left, mask starts in top-left. The scales are also different.
+    // TODO: These seem to overlap a bit when we get close to single-pixel scale.
     int mouseX = mouse.x;
     int mouseY = mouse.y;
     switch (Direction) {
