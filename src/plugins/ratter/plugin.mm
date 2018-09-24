@@ -59,12 +59,25 @@ struct mask
     overlay *LeftOverlay;
 };
 
-internal macos_application *Application;
-internal mask *Mask;
-internal overlay *Locator;
+@interface TimerManager : NSObject {
+}
+- (void)ClearLocator;
+- (void)ResetLocatorCancelTimer;
+- (void)ClearLocatorCancelTimer;
+- (void)FinishMove;
+- (void)ResetMoveCancelTimer;
+- (void)ClearMoveCancelTimer;
+@end
+
+internal NSTimer *LocatorCancelTimer;
+internal NSTimer *MoveCancelTimer;
+internal TimerManager *timerManager;
 internal bool ResetBeforeMove;
 internal bool ShowMask;
 internal chunkwm_api API;
+internal macos_application *Application;
+internal mask *Mask;
+internal overlay *Locator;
 
 static void
 InitOverlay(overlay *Overlay, int X, int Y, int W, int H)
@@ -187,16 +200,6 @@ CreateLocator(int X, int Y)
     Locator = CreateOverlay(X, Y, W, H, BorderWidth, BorderRadius, BorderColor, BackgroundColor);
 }
 
-internal void
-ClearLocator()
-{
-    if (Locator) {
-        // TODO: Do we need to clear it here? Thread safe?
-        DestroyOverlay(Locator);
-        Locator = nil;
-    }
-}
-
 // Returns the CGDirectDisplayID
 // TODO: Some sort of error handling if it is an unknown display
 internal CGDirectDisplayID
@@ -314,7 +317,7 @@ GetMousePosition()
 internal void
 ShowLocator()
 {
-    ClearLocator();
+    [timerManager ClearLocator];
     // TODO: Set timeout to clear it
     NSPoint mouse = GetMousePosition();
     CreateLocator(mouse.x, mouse.y);
@@ -342,6 +345,78 @@ BeginMove()
     // Create the mask, at the edges of the screen
     CreateMask(0, 0, 0, 0);
 }
+
+@implementation TimerManager
+- (void)ClearLocator
+{
+    [self ClearLocatorCancelTimer];
+    if (Locator) {
+        // TODO: Do we need to clear it here? Thread safe?
+        DestroyOverlay(Locator);
+        Locator = nil;
+    }
+}
+
+- (void)ResetLocatorCancelTimer
+{
+    if (LocatorCancelTimer) {
+      [LocatorCancelTimer invalidate];
+    }
+
+    int TimeoutMS = CVarIntegerValue("ratter_locator_display_time");
+    NSTimeInterval interval = TimeoutMS / 1000.0;
+
+    LocatorCancelTimer = [NSTimer scheduledTimerWithTimeInterval:interval
+                           target:self
+                           selector:@selector(ClearLocator)
+                           userInfo:nil
+                           repeats:NO];
+}
+
+- (void)ClearLocatorCancelTimer
+{
+    if (LocatorCancelTimer) {
+      [LocatorCancelTimer invalidate];
+      LocatorCancelTimer = nil;
+    }
+}
+
+- (void)FinishMove
+{
+    [self ClearMoveCancelTimer];
+    [self ClearLocator];
+    ClearMask();
+    // Move the mouse to it's current position to trigger movement events
+    // TODO: do we need to warp back to start then move it?
+    NSPoint mouse = GetMousePosition();
+    SetMousePosition(mouse.x, mouse.y, true);
+    // If we are dragging, reset position, and trigger a mouse-up
+}
+
+- (void)ResetMoveCancelTimer
+{
+    if (MoveCancelTimer) {
+      [MoveCancelTimer invalidate];
+    }
+
+    int TimeoutMS = CVarIntegerValue("ratter_cancel_timeout");
+    NSTimeInterval interval = TimeoutMS / 1000.0;
+
+    MoveCancelTimer = [NSTimer scheduledTimerWithTimeInterval:interval
+                        target:self
+                        selector:@selector(FinishMove)
+                        userInfo:nil
+                        repeats:NO];
+}
+
+- (void)ClearMoveCancelTimer
+{
+    if (MoveCancelTimer) {
+      [MoveCancelTimer invalidate];
+      MoveCancelTimer = nil;
+    }
+}
+@end
 
 internal void
 Move(int Direction)
@@ -379,24 +454,13 @@ Move(int Direction)
     SetMousePosition(mouseX, mouseY, false);
 
     // Reset cancel timeout
-}
-
-internal void
-FinishMove()
-{
-    ClearLocator();
-    ClearMask();
-    // Move the mouse to it's current position to trigger movement events
-    // TODO: do we need to warp back to start then move it?
-    NSPoint mouse = GetMousePosition();
-    SetMousePosition(mouse.x, mouse.y, true);
-    // If we are dragging, reset position, and trigger a mouse-up
+    [timerManager ResetMoveCancelTimer];
 }
 
 internal void
 Click()
 {
-    if (MoveIsInProgress()) FinishMove();
+    if (MoveIsInProgress()) [timerManager FinishMove];
     // If we are dragging, trigger a mouse-up, otherwise a click
     // TODO: Handle modifiers (alt/ctrl/etc)
 }
@@ -404,7 +468,7 @@ Click()
 internal void
 RightClick()
 {
-    if (MoveIsInProgress()) FinishMove();
+    if (MoveIsInProgress()) [timerManager FinishMove];
     // Trigger a right click
     // TODO: Handle modifiers (alt/ctrl/etc)
 }
@@ -413,7 +477,7 @@ internal void
 BeginDrag()
 {
     // TODO: Figure out how this should work
-    if (MoveIsInProgress()) FinishMove();
+    if (MoveIsInProgress()) [timerManager FinishMove];
     // Trigger a mouse-down
 }
 
@@ -438,7 +502,7 @@ CommandHandler(void *Data)
     } else if (StringEquals(Payload->Command, "left")) {
         Move(LEFT);
     } else if (StringEquals(Payload->Command, "cancel")) {
-        FinishMove();
+        [timerManager FinishMove];
     } else if (StringEquals(Payload->Command, "click")) {
         Click();
     } else if (StringEquals(Payload->Command, "rightclick")) {
@@ -463,8 +527,9 @@ PLUGIN_BOOL_FUNC(PluginInit)
     API = ChunkwmAPI;
     c_log = API.Log;
     BeginCVars(&API);
+    timerManager = [TimerManager alloc];
 
-    CreateCVar("ratter_cancel_timeout", 1000);
+    CreateCVar("ratter_cancel_timeout", 500);
     CreateCVar("ratter_locator_backgound_color", 0xbb4799b7);
     CreateCVar("ratter_locator_border_color", 0);
     CreateCVar("ratter_locator_border_radius", 16);
@@ -487,7 +552,7 @@ PLUGIN_BOOL_FUNC(PluginInit)
 PLUGIN_VOID_FUNC(PluginDeInit)
 {
     if (MoveIsInProgress()) {
-        FinishMove();
+        [timerManager FinishMove];
     }
 }
 
