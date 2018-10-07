@@ -307,17 +307,14 @@ GetMousePosition()
   // TODO: This needs to take into account cursor size (or where the click
   // would actually happen). It seems to move around the bottom-left ofthe
   // mouse for some reason.
-  CGEventRef event = CGEventCreate(nil);
-  CGPoint loc = CGEventGetLocation(event);
-  CFRelease(event);
-  return loc;
+  return AXLibGetCursorPos();
 }
 
 internal void
 ShowLocator()
 {
     [timerManager ClearLocator];
-    // TODO: Set timeout to clear it
+    [timerManager ResetLocatorCancelTimer];
     NSPoint mouse = GetMousePosition();
     CreateLocator(mouse.x, mouse.y);
 }
@@ -325,13 +322,26 @@ ShowLocator()
 internal void
 SetMousePosition(int X, int Y, bool triggerEvents)
 {
-  NSPoint Position = NSMakePoint(X, Y);
-  if (triggerEvents) {
-      CGDisplayMoveCursorToPoint(CGDirectDisplayIDForPoint(X, Y), Position);
-  } else {
-      CGWarpMouseCursorPosition(Position);
-  }
+    NSPoint Position = NSMakePoint(X, Y);
+    if (triggerEvents) {
+        CGDisplayMoveCursorToPoint(CGDirectDisplayIDForPoint(X, Y), Position);
+    } else {
+        CGWarpMouseCursorPosition(Position);
+    }
 }
+
+internal void
+PostMouseEvent(CGPoint mouseCursorPosition, bool left, bool right)
+{
+    /*
+    CGEventRef event = CGEventCreateMouseEvent(NULL, mouseType, mouseCursorPosition, mouseButton);
+    CGEventPost(mouseCursorPosition, event);
+    CFRelease(event);
+    */
+    // TODO: This is deprecated, use Events instead
+    CGPostMouseEvent(mouseCursorPosition, true, 2, left, right);
+}
+
 
 internal void
 BeginMove()
@@ -359,10 +369,13 @@ BeginMove()
 - (void)ResetLocatorCancelTimer
 {
     if (LocatorCancelTimer) {
-      [LocatorCancelTimer invalidate];
+        [LocatorCancelTimer invalidate];
     }
 
     int TimeoutMS = CVarIntegerValue("ratter_locator_display_time");
+    if (TimeoutMS == -1) {
+        return;
+    }
     NSTimeInterval interval = TimeoutMS / 1000.0;
 
     LocatorCancelTimer = [NSTimer scheduledTimerWithTimeInterval:interval
@@ -386,19 +399,21 @@ BeginMove()
     [self ClearLocator];
     ClearMask();
     // Move the mouse to it's current position to trigger movement events
-    // TODO: do we need to warp back to start then move it?
     NSPoint mouse = GetMousePosition();
     SetMousePosition(mouse.x, mouse.y, true);
-    // If we are dragging, reset position, and trigger a mouse-up
 }
 
 - (void)ResetMoveCancelTimer
 {
+    // TODO: Timers don't seem to be firing
     if (MoveCancelTimer) {
       [MoveCancelTimer invalidate];
     }
 
     int TimeoutMS = CVarIntegerValue("ratter_cancel_timeout");
+    if (TimeoutMS == -1) {
+        return;
+    }
     NSTimeInterval interval = TimeoutMS / 1000.0;
 
     MoveCancelTimer = [NSTimer scheduledTimerWithTimeInterval:interval
@@ -460,24 +475,25 @@ internal void
 Click()
 {
     if (MoveIsInProgress()) [timerManager FinishMove];
-    // If we are dragging, trigger a mouse-up, otherwise a click
-    // TODO: Handle modifiers (alt/ctrl/etc)
+    CGPoint mouse = GetMousePosition();
+    PostMouseEvent(mouse, true, false);
+    PostMouseEvent(mouse, false, false);
 }
 
 internal void
 RightClick()
 {
     if (MoveIsInProgress()) [timerManager FinishMove];
-    // Trigger a right click
-    // TODO: Handle modifiers (alt/ctrl/etc)
+    CGPoint mouse = GetMousePosition();
+    PostMouseEvent(mouse, false, true);
+    PostMouseEvent(mouse, false, false);
 }
 
 internal void
 BeginDrag()
 {
-    // TODO: Figure out how this should work
+    // TODO: Figure out how to do this
     if (MoveIsInProgress()) [timerManager FinishMove];
-    // Trigger a mouse-down
 }
 
 internal inline bool
