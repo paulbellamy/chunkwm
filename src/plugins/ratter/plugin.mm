@@ -75,7 +75,6 @@ internal TimerManager *timerManager;
 internal bool ResetBeforeMove;
 internal bool ShowMask;
 internal chunkwm_api API;
-internal macos_application *Application;
 internal mask *Mask;
 internal overlay *Locator;
 
